@@ -164,8 +164,31 @@
           <option value="ro-RO">Romanian</option>
         </select>
       </label>
-      <label>Voice
-        <div class="row"><select id="sVoice"></select><button type="button" class="mini" id="sVoiceTest">PLAY</button></div>
+      <div class="s-sec mono">VOICE</div>
+      <label>Voice engine
+        <div class="row"><select id="sEngine">
+          <option value="eleven">ElevenLabs (realistic)</option>
+          <option value="browser">Built-in browser voice (free)</option>
+        </select><button type="button" class="mini" id="sVoiceTest">PLAY</button></div>
+      </label>
+      <label>ElevenLabs API key
+        <div class="row"><input id="sElKey" type="password" placeholder="From elevenlabs.io → Developers → API keys" autocomplete="off"><button type="button" class="mini" id="sElTest">TEST</button></div>
+        <small id="sElOut">Also stored only on this device. If ElevenLabs fails or runs out of credits, JARVIS falls back to the browser voice.</small>
+      </label>
+      <label>ElevenLabs voice
+        <select id="sElVoice"></select>
+        <small>British presets are listed first. Press TEST to load every voice in your ElevenLabs library, including ones you add from their Voice Library.</small>
+      </label>
+      <label>ElevenLabs model
+        <select id="sElModel">
+          <option value="eleven_flash_v2_5">Flash v2.5: fastest, uses fewest credits</option>
+          <option value="eleven_multilingual_v2">Multilingual v2: richest quality</option>
+          <option value="eleven_v3">v3: most expressive, slower</option>
+        </select>
+      </label>
+      <label><span><input type="checkbox" id="sFx"> HUD voice filter (subtle AI processing, like the films)</span></label>
+      <label>Browser voice (fallback)
+        <select id="sVoice"></select>
       </label>
       <label>Speech rate <input id="sRate" type="range" min="0.7" max="1.4" step="0.05"></label>
       <button type="button" class="btn" id="sForget">ERASE MEMORY</button>

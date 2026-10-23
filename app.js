@@ -19,9 +19,21 @@ const cfg = {
   get lang() { return store.get("lang", "en-US"); },
   get voice() { return store.get("voice", ""); },
   get rate() { return parseFloat(store.get("rate", "1")); },
+  get elKey() { return store.get("elKey", ""); },
+  get engine() { return store.get("engine", "eleven"); },
+  get elVoice() { return store.get("elVoice", EL_PRESETS[0].id); },
+  get elModel() { return store.get("elModel", "eleven_flash_v2_5"); },
+  get fx() { return store.get("fx", "1") === "1"; },
 };
+// ElevenLabs premade British voices (IDs from ElevenLabs' default library; TEST in settings shows what the account really has)
+const EL_PRESETS = [
+  { id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel: deep, composed British (recommended)" },
+  { id: "JBFqnCBsd6RMkjVDRZzb", name: "George: warm, mature British" },
+];
+
 // shared state (declared first: the clock and reactor read it right away)
 const timers = [];
+let actx = null, analyser = null, freq = null, audioPlaying = false, currentSource = null;
 let wakeMode = false, state = "idle";
 
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -89,7 +101,12 @@ updateAi();
     level += (target - level) * .08;
     for (let i = 0; i < N; i++) {
       const a = (i / N) * Math.PI * 2 - Math.PI / 2;
-      const wave = Math.abs(Math.sin(t / 180 + i * .7) * Math.sin(t / 310 + i * .23)) + Math.random() * .25;
+      let wave = Math.abs(Math.sin(t / 180 + i * .7) * Math.sin(t / 310 + i * .23)) + Math.random() * .25;
+      if (audioPlaying && analyser) {
+        if (i === 0) analyser.getByteFrequencyData(freq);
+        const bin = 2 + Math.floor(Math.abs((i % 32) - 16) * 2.2);     // mirrored spectrum around the ring
+        wave = freq[bin] / 190;
+      }
       const len = 3 + level * wave * 26;
       const r1 = 140, r2 = r1 + len;
       const e = barEls[i];
@@ -164,10 +181,23 @@ function cleanForSpeech(t) {
     .replace(/[*_#`>|~]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1").replace(/\s+/g, " ").trim();
 }
 function speak(text) {
-  if (!("speechSynthesis" in window)) return Promise.resolve();
-  speechSynthesis.cancel();
   const clean = cleanForSpeech(text);
+  stopAudio();
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (!clean) return Promise.resolve();
+  if (cfg.engine === "eleven" && cfg.elKey && navigator.onLine) {
+    const id = ++speakId;
+    speaking = true; pauseRec(); setState("speaking");
+    return elevenSpeak(clean, id).catch(err => {
+      if (id !== speakId) return;
+      elevenWarn(err);
+      return browserSpeak(clean);
+    }).finally(() => { if (id === speakId) { speaking = false; afterSpeak(); } });
+  }
+  return browserSpeak(clean);
+}
+function browserSpeak(clean) {
+  if (!("speechSynthesis" in window)) { speaking = false; afterSpeak(); return Promise.resolve(); }
   // Chrome cuts long utterances (~15s): queue sentence by sentence
   const parts = clean.match(/[^.!?;]+[.!?;]*/g) || [clean];
   const voice = bestVoice(), id = ++speakId;
@@ -183,7 +213,105 @@ function speak(text) {
   });
 }
 function say(text) { addMsg(text, "jarvis"); return speak(text); }
-function silence() { speakId++; if ("speechSynthesis" in window) speechSynthesis.cancel(); speaking = false; afterSpeak(); }
+function silence() { speakId++; stopAudio(); if ("speechSynthesis" in window) speechSynthesis.cancel(); speaking = false; afterSpeak(); }
+
+// ------------------------------------------------------------------ ElevenLabs voice
+// Audio goes through Web Audio: it works after the first tap on iPhone/iPad, allows the HUD filter and feeds the reactor.
+function audioCtx() {
+  if (!actx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    actx = new AC();
+    analyser = actx.createAnalyser(); analyser.fftSize = 128; analyser.smoothingTimeConstant = .6;
+    freq = new Uint8Array(analyser.frequencyBinCount);
+    analyser.connect(actx.destination);
+  }
+  return actx;
+}
+// browsers only allow sound after a user gesture: unlock on the first tap / key
+function unlockAudio() {
+  const c = audioCtx(); if (!c) return;
+  if (c.state !== "running") c.resume().catch(() => {});
+  const b = c.createBuffer(1, 1, 22050), src = c.createBufferSource(); src.buffer = b; src.connect(c.destination); src.start(0);
+}
+["pointerdown", "touchend", "keydown"].forEach(ev => addEventListener(ev, unlockAudio, { passive: true }));
+
+function fxChain(c) {
+  // subtle "suit comms" colour: trim lows, lift presence, tiny short echo
+  const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 110;
+  const pk = c.createBiquadFilter(); pk.type = "peaking"; pk.frequency.value = 3200; pk.Q.value = .9; pk.gain.value = 3;
+  const dly = c.createDelay(); dly.delayTime.value = .022;
+  const fb = c.createGain(); fb.gain.value = .14;
+  const out = c.createGain();
+  hp.connect(pk); pk.connect(out); pk.connect(dly); dly.connect(fb); fb.connect(out);
+  out.connect(analyser);
+  return hp;
+}
+
+const ttsCache = new Map();   // short phrases ("Yes, sir?") are reused instead of paying for them again
+async function elevenAudio(text) {
+  const key = `${cfg.elVoice}|${cfg.elModel}|${cfg.rate}|${text}`;
+  if (ttsCache.has(key)) return ttsCache.get(key);
+  const p = (async () => {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(cfg.elVoice)}?output_format=mp3_44100_128`, {
+      method: "POST",
+      headers: { "xi-api-key": cfg.elKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
+      body: JSON.stringify({
+        text, model_id: cfg.elModel,
+        voice_settings: { stability: .55, similarity_boost: .8, style: .1, use_speaker_boost: true, speed: Math.min(1.2, Math.max(.7, cfg.rate)) },
+      }),
+    });
+    if (!res.ok) {
+      let detail = ""; try { const j = await res.json(); detail = j.detail?.message || j.detail?.status || JSON.stringify(j.detail || j); } catch {}
+      const err = new Error(detail || res.statusText); err.status = res.status; throw err;
+    }
+    const buf = await res.arrayBuffer();
+    return await new Promise((ok, bad) => audioCtx().decodeAudioData(buf, ok, bad));
+  })();
+  if (text.length <= 80) { ttsCache.set(key, p); p.catch(() => ttsCache.delete(key)); }
+  return p;
+}
+function chunkText(t) {
+  // first sentence alone so playback starts fast; the rest in larger pieces, all requested in parallel
+  const sentences = t.match(/[^.!?]+[.!?]*\s*/g) || [t];
+  const chunks = [sentences.shift()];
+  let cur = "";
+  for (const s of sentences) { if ((cur + s).length > 700 && cur) { chunks.push(cur); cur = ""; } cur += s; }
+  if (cur.trim()) chunks.push(cur);
+  return chunks.map(c => c.trim()).filter(Boolean);
+}
+async function elevenSpeak(text, id) {
+  const c = audioCtx();
+  if (!c) throw new Error("Web Audio isn't available");
+  if (c.state !== "running") await c.resume().catch(() => {});
+  const jobs = chunkText(text).map(elevenAudio);
+  for (const job of jobs) {
+    const buffer = await job;
+    if (id !== speakId) return;
+    await new Promise(resolve => {
+      const src = c.createBufferSource(); src.buffer = buffer;
+      src.connect(cfg.fx ? fxChain(c) : analyser);
+      src.onended = () => { audioPlaying = false; currentSource = null; resolve(); };
+      currentSource = src; audioPlaying = true; src.start();
+    });
+    if (id !== speakId) return;
+  }
+}
+function stopAudio() {
+  if (currentSource) { try { currentSource.onended = null; currentSource.stop(); } catch {} currentSource = null; }
+  audioPlaying = false;
+}
+let elWarned = 0;
+function elevenWarn(err) {
+  if (Date.now() - elWarned < 60000) return;     // don't spam the log
+  elWarned = Date.now();
+  let msg = `ElevenLabs voice failed (${err.message}). Using the browser voice.`;
+  if (err.status === 401) msg = "ElevenLabs rejected the API key (or it lacks text-to-speech permission). Using the browser voice.";
+  else if (err.status === 402 || /quota|credits|limit/i.test(err.message)) msg = "ElevenLabs credits are used up for this month. Using the browser voice.";
+  else if (err.status === 404 || /voice/i.test(err.message) && err.status === 400) msg = "That ElevenLabs voice isn't available on your account. Pick another in settings. Using the browser voice for now.";
+  else if (err instanceof TypeError) msg = "Couldn't reach ElevenLabs. Using the browser voice.";
+  addMsg(msg, "sys");
+}
 
 // ------------------------------------------------------------------ speech recognition
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -825,6 +953,8 @@ function openSettings() {
   $("sSearch").checked = cfg.search;
   fillModels(cfg.model ? [cfg.model] : []);
   loadVoices();
+  $("sEngine").value = cfg.engine; $("sElKey").value = cfg.elKey; $("sElModel").value = cfg.elModel; $("sFx").checked = cfg.fx;
+  fillElVoices(elVoicesLoaded);
   $("settings").showModal();
 }
 function fillModels(list) {
@@ -858,6 +988,47 @@ $("sRegion").onchange = e => store.set("region", e.target.value.trim());
 $("sLang").onchange = e => { store.set("lang", e.target.value); store.del("voice"); loadVoices(); };
 $("sVoice").onchange = e => store.set("voice", e.target.value);
 $("sRate").oninput = e => store.set("rate", e.target.value);
+let elVoicesLoaded = [];
+function fillElVoices(list) {
+  const sel = $("sElVoice"), cur = cfg.elVoice;
+  sel.innerHTML = "";
+  const seen = new Set();
+  const add = (id, name) => { if (seen.has(id)) return; seen.add(id); sel.add(new Option(name, id)); };
+  EL_PRESETS.forEach(v => add(v.id, v.name));
+  list.forEach(v => add(v.id, v.name));
+  if (!seen.has(cur)) add(cur, "Current voice (" + cur.slice(0, 6) + "…)");
+  sel.value = cur;
+}
+async function testEleven() {
+  const key = $("sElKey").value.trim(), out = $("sElOut");
+  if (!key) return out.textContent = "Enter a key first.";
+  out.textContent = "Testing…";
+  try {
+    const r = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": key } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail?.message || j.detail?.status || r.statusText);
+    const british = v => /brit|engl|uk/i.test(`${v.labels?.accent || ""} ${v.labels?.locale || ""} ${v.name} ${v.description || ""}`);
+    const male = v => /male/i.test(v.labels?.gender || "") && !/female/i.test(v.labels?.gender || "");
+    const voices = (j.voices || []).map(v => ({ v, score: (british(v) ? 2 : 0) + (male(v) ? 1 : 0) }))
+      .sort((a, b) => b.score - a.score)
+      .map(({ v }) => ({ id: v.voice_id, name: `${v.name}${v.labels?.accent ? " · " + v.labels.accent : ""}${v.labels?.gender ? " · " + v.labels.gender : ""}${v.category && v.category !== "premade" ? " · " + v.category : ""}` }));
+    elVoicesLoaded = voices;
+    store.set("elKey", key);
+    fillElVoices(voices);
+    let credits = "";
+    try {
+      const s = await (await fetch("https://api.elevenlabs.io/v1/user/subscription", { headers: { "xi-api-key": key } })).json();
+      if (s.character_limit) credits = ` Credits used this month: ${s.character_count.toLocaleString()} / ${s.character_limit.toLocaleString()}.`;
+    } catch {}
+    out.textContent = `✓ Key works. ${voices.length} voices loaded.${credits}`;
+  } catch (e) { out.textContent = "✗ " + (e instanceof TypeError ? "Couldn't reach ElevenLabs from this browser." : e.message); }
+}
+$("sElTest").onclick = testEleven;
+$("sEngine").onchange = e => store.set("engine", e.target.value);
+$("sElKey").onchange = e => store.set("elKey", e.target.value.trim());
+$("sElVoice").onchange = e => store.set("elVoice", e.target.value);
+$("sElModel").onchange = e => store.set("elModel", e.target.value);
+$("sFx").onchange = e => store.set("fx", e.target.checked ? "1" : "0");
 $("sVoiceTest").onclick = () => speak(cfg.lang.startsWith("ro") ? "Bună ziua. Toate sistemele sunt funcționale." : `Good day, ${cfg.title}. All systems are online.`);
 $("sForget").onclick = () => { history = []; saveHistory(); $("sForget").textContent = "MEMORY ERASED"; };
 

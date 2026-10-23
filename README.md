@@ -41,6 +41,15 @@ Anything you say goes to Gemini, except these, which are instant:
 
 **WAKE WORD** = always listening; say "Jarvis, ..." before each command. **Ctrl+Space** = talk, **Esc** = silence.
 
+## ElevenLabs voice (optional, realistic British voice)
+1. Account at https://elevenlabs.io (free tier: ~10,000 credits/month; Flash uses fewer credits per character).
+2. Profile → **API Keys** → create a key (enable Text to Speech + Voices read).
+3. In JARVIS: ⚙️ → Voice engine **ElevenLabs** → paste key → **TEST** (shows your voices and credits left) → pick a voice → **PLAY**.
+- Presets: **Daniel** (deep, composed British) and **George** (warm, mature British).
+- More options: browse ElevenLabs' **Voice Library**, filter *English · British · male* (try "butler", "narrator", "AI assistant"), add a voice to *My Voices*, press TEST again.
+- No celebrity or actor voice clones: only voices from ElevenLabs' library.
+- If the key fails or credits run out, JARVIS switches to the browser voice automatically.
+
 ## Settings
 Model (`gemini-flash-latest` by default; **TEST** lists every model your key can use), Google Search grounding on/off,
 how JARVIS addresses you, home city, news region, speech language (English / Romanian), voice, speed.
