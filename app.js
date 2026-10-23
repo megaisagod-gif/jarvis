@@ -531,8 +531,7 @@ Only use actions when the user asks for them.`;
 }
 
 async function gemini(userText, opts = {}) {
-  const { image = null, json = false, remember = !json } = opts;
-  const useSearch = opts.useSearch ?? (cfg.search && !json);
+  const { image = null, json = false, remember = !json, onText = null } = opts;
   const parts = [{ text: userText }];
   if (image) parts.unshift({ inlineData: { mimeType: "image/jpeg", data: image } });
   const contents = remember ? [...history.slice(-20), { role: "user", parts }] : [{ role: "user", parts }];
@@ -543,30 +542,105 @@ async function gemini(userText, opts = {}) {
     generationConfig: json ? { temperature: .4, maxOutputTokens: 16384, responseMimeType: "application/json" }
                            : { temperature: .7, maxOutputTokens: 4096 },
   };
-  if (useSearch) body.tools = [{ google_search: {} }];
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.key },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
+  if (opts.useSearch ?? (cfg.search && !json)) body.tools = [{ google_search: {} }];
+  // keep "thinking" short: a voice assistant must answer fast (dropped automatically if a model rejects it)
+  if (store.get("noThinkCfg", "") !== "1") body.generationConfig.thinkingConfig = { thinkingLevel: "low" };
+
+  // try the chosen model, retry transient failures, then fall back to other Flash models
+  const models = modelChain();
+  let lastErr;
+  for (let mi = 0; mi < models.length; mi++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const out = await callGemini(models[mi], body, onText);
+        if (mi > 0) addMsg(`${cfg.model} wasn't responding, so I answered with ${models[mi]}.`, "sys");
+        if (remember) {
+          // photos are not kept in memory (too big for storage); just note that one was sent
+          history.push({ role: "user", parts: [{ text: (image ? "[sent a photo] " : "") + userText }] }, { role: "model", parts: [{ text: out.text }] });
+          saveHistory();
+        }
+        return out;
+      } catch (e) {
+        lastErr = e;
+        const msg = e.message || "";
+        if (e.status === 400 && body.generationConfig.thinkingConfig && /thinking/i.test(msg)) {
+          delete body.generationConfig.thinkingConfig; store.set("noThinkCfg", "1"); attempt--; continue;
+        }
+        if (body.tools && (e.status === 400 || e.status === 429) && /search|tool|grounding|quota|exhausted/i.test(msg)) {
+          delete body.tools; attempt--; continue;
+        }
+        if (e.status === 404) break;                      // model doesn't exist: next model
+        if (!isTransient(e)) throw e;                     // bad key, safety block, etc.: no point retrying
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+  }
+  throw lastErr;
+}
+const isTransient = e => !e.status || e.status === 408 || e.status === 429 || e.status >= 500;
+function modelChain() {
+  let known = [];
+  try { known = JSON.parse(store.get("models", "[]")); } catch {}
+  const extra = known.filter(m => /flash/.test(m) && !/preview|exp|lite/.test(m)).slice(0, 1);
+  return [...new Set([cfg.model, "gemini-flash-latest", ...extra, "gemini-flash-lite-latest"])];
+}
+
+// streaming call: data arrives continuously, so Safari doesn't drop slow answers, and text can appear live
+async function callGemini(model, body, onText) {
+  const ctrl = new AbortController();
+  let timer = setTimeout(() => ctrl.abort(), 45000);       // no first byte in 45 s: give up on this try
+  let res;
+  try {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.key },
+      body: JSON.stringify(body),
+    });
+  } catch (e) { clearTimeout(timer); throw netError(e); }
   if (!res.ok) {
-    const msg = data.error?.message || res.statusText;
-    // search grounding may be unavailable for some models / quotas: retry once without it
-    if (useSearch && (res.status === 400 || res.status === 429) && /search|tool|grounding|quota|exhausted/i.test(msg))
-      return gemini(userText, { ...opts, useSearch: false });
-    const err = new Error(msg); err.status = res.status; throw err;
+    clearTimeout(timer);
+    const data = await res.json().catch(() => ({}));
+    const err = new Error(data.error?.message || res.statusText || "HTTP " + res.status); err.status = res.status; throw err;
   }
-  const cand = data.candidates?.[0];
-  const text = (cand?.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join("").trim();
-  if (!text) throw new Error(cand?.finishReason === "SAFETY" ? "That request was blocked by Gemini's safety filter." : "Gemini returned an empty response.");
-  if (remember) {
-    // photos are not kept in memory (too big for storage); just note that one was sent
-    history.push({ role: "user", parts: [{ text: (image ? "[sent a photo] " : "") + userText }] }, { role: "model", parts: [{ text }] });
-    saveHistory();
+  let text = "", finish = "", grounding = null, buf = "";
+  const handleEvent = line => {
+    if (!line.startsWith("data:")) return;
+    let d; try { d = JSON.parse(line.slice(5)); } catch { return; }
+    if (d.error) { const err = new Error(d.error.message); err.status = d.error.code; throw err; }
+    const c = d.candidates?.[0]; if (!c) return;
+    for (const p of c.content?.parts || []) if (p.text && !p.thought) text += p.text;
+    if (c.finishReason) finish = c.finishReason;
+    if (c.groundingMetadata) grounding = c.groundingMetadata;
+    onText?.(text);
+  };
+  try {
+    if (res.body?.getReader) {
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      for (;;) {
+        clearTimeout(timer); timer = setTimeout(() => ctrl.abort(), 45000);   // stalled stream
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split(/\r?\n/); buf = lines.pop();
+        lines.forEach(handleEvent);
+      }
+      if (buf) handleEvent(buf);
+    } else {
+      (await res.text()).split(/\r?\n/).forEach(handleEvent);
+    }
+  } catch (e) { throw e.status ? e : netError(e); }
+  finally { clearTimeout(timer); }
+  text = text.trim();
+  if (!text) {
+    const err = new Error(finish === "SAFETY" ? "That request was blocked by Gemini's safety filter." : "Gemini returned an empty response.");
+    if (finish !== "SAFETY") err.status = 503;              // empty answer: worth retrying
+    throw err;
   }
-  const chunks = cand.groundingMetadata?.groundingChunks || [];
-  return { text, sources: chunks.map(c => c.web).filter(Boolean) };
+  return { text, sources: (grounding?.groundingChunks || []).map(c => c.web).filter(Boolean) };
+}
+function netError(e) {
+  const err = new Error(e.name === "AbortError" ? "Gemini took too long to respond" : "connection to Gemini dropped (" + e.message + ")");
+  err.network = true; return err;
 }
 
 function showSources(sources, title) {
@@ -606,7 +680,8 @@ async function askAI(text, { sourceTitle, image } = {}) {
   const pending = addMsg("", "jarvis"); pending.classList.add("typing");
   try {
     if (!image && visionOn) image = captureFrame();
-    const { text: reply, sources } = await gemini(text, { image });
+    const body = pending.querySelector(".body");
+    const { text: reply, sources } = await gemini(text, { image, onText: t => { body.textContent = t.replace(/\[\[[^\]]*\]\]?/g, "").replace(/```[\s\S]*$/, ""); $("log").scrollTop = 1e9; } });
     setPill("aiPill", "ok");
     const spoken = runActions(reply);
     pending.classList.remove("typing");
@@ -625,7 +700,9 @@ function geminiError(e) {
     else if (e.status === 403) msg = "Gemini refused the request. The API key may be restricted or disabled.";
     else if (e.status === 404) msg = `The model ${cfg.model} isn't available. Pick another one in settings.`;
     else if (e.status === 429) msg = "We've hit Gemini's rate limit. Give it a minute and try again.";
-    else if (e.status >= 500) msg = "Gemini's servers are having trouble right now. Try again shortly.";
+    else if (e.status >= 500) msg = "Gemini's servers are overloaded right now. I retried and tried other models. Give it a minute.";
+    else if (e.network) msg = "I couldn't get through to Gemini. I retried and tried other models. Check the internet connection and try again.";
+    addMsg(`Technical detail: ${e.status ? "HTTP " + e.status + ", " : ""}${e.message}`, "sys");
     setPill("aiPill", "err");
     return msg;
 }
@@ -1032,7 +1109,7 @@ async function testKey() {
     if (!r.ok) throw new Error(j.error?.message || r.statusText);
     const names = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
       .map(m => m.name.replace("models/", "")).filter(n => /^gemini/.test(n) && !/embedding|image|tts|audio|live/.test(n));
-    fillModels(names);
+    fillModels(names); store.set("models", JSON.stringify(names));
     out.textContent = `✓ Key works. ${names.length} models available.`;
     store.set("key", key); updateAi();
   } catch (e) { out.textContent = "✗ " + e.message; }
