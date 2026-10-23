@@ -933,8 +933,15 @@ const HELP = () => `Here's what I can do, ${cfg.title}. Tap VISION and I'll see 
 
 async function handle(raw) {
   addMsg(raw, "user");
+  // "Jarvis, ..." also works with TALK / typing: drop the name so the commands below still match
+  raw = raw.replace(/^\s*(?:hey\s+|ok\s+|okay\s+)?(?:jarvis|jervis|javis|jarvus)\b[\s,.!?:;-]*/i, "");
+  if (!raw.trim()) return say(pick([`Yes, ${cfg.title}?`, "At your service."]));
   const n = norm(raw);
   let m;
+
+  // a question about "this / here" with nothing to look at: say how to show it instead of guessing
+  if (!visionOn && /\b(what'?s wrong (here|with (this|it))|what is wrong (here|with (this|it))|what am i looking at|is this (right|correct|ok|okay|wired right)|what do you see|can you see (this|it))\b/.test(n))
+    return say(`I can't see it yet, ${cfg.title}. Tap VISION so I can look through the camera, or tap the camera icon to send me a photo, then ask again.`);
 
   if (awaitingIdea) { awaitingIdea = false; if (!/^(never mind|nevermind|cancel|nothing)\b/.test(n)) return createProject(raw); return say("Very well."); }
 
