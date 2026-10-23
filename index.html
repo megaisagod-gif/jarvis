@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>J.A.R.V.I.S.</title>
+<meta name="description" content="Voice assistant powered by Gemini">
+<meta name="theme-color" content="#02070c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JARVIS">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Rajdhani:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div class="scanlines"></div>
+
+<header class="hud">
+  <div class="hud-left">
+    <span class="brand">J.A.R.V.I.S.</span>
+    <span class="tag mono">MK-II // STARK OS</span>
+  </div>
+  <div class="hud-center mono">
+    <span id="hudTime">--:--:--</span>
+    <span class="sep">|</span>
+    <span id="hudDate">---</span>
+  </div>
+  <div class="hud-right mono">
+    <span class="pill" id="aiPill"><i></i>AI</span>
+    <span class="pill" id="micPill"><i></i>MIC</span>
+    <span class="pill" id="netPill"><i></i>NET</span>
+    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.2 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.7c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="deck">
+  <!-- LEFT: intel -->
+  <section class="panel intel" id="intelPanel">
+    <div class="panel-head"><span>INTEL FEED</span><span class="mono dim" id="intelMeta">STANDBY</span></div>
+    <div class="panel-body" id="intel">
+      <div class="widget" id="wxWidget">
+        <div class="w-title mono">ATMOSPHERIC</div>
+        <div class="wx-row"><span class="wx-temp" id="wxTemp">--°</span>
+          <div><div id="wxDesc">No data</div><div class="mono dim" id="wxMeta"></div></div></div>
+      </div>
+      <div class="widget" id="timerWidget" hidden>
+        <div class="w-title mono">ACTIVE TIMERS</div>
+        <div id="timerList"></div>
+      </div>
+      <div class="widget">
+        <div class="w-title mono">SOURCES</div>
+        <div id="sources" class="sources"><div class="dim">Ask for the news or anything current and the sources will appear here.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CENTER: reactor -->
+  <section class="core-zone">
+    <div class="reactor idle" id="reactor" role="button" tabindex="0" aria-label="Talk to JARVIS">
+      <svg viewBox="0 0 400 400" class="reactor-svg">
+        <defs>
+          <radialGradient id="coreGlow">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="30%" stop-color="#9ff3ff"/>
+            <stop offset="60%" stop-color="#2ad4ff" stop-opacity=".55"/>
+            <stop offset="100%" stop-color="#2ad4ff" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <g class="spin-slow"><circle cx="200" cy="200" r="190" class="ring-thin" stroke-dasharray="2 6"/></g>
+        <g id="ticks" class="spin-rev"></g>
+        <g id="bars"></g>
+        <g class="spin-mid">
+          <circle cx="200" cy="200" r="128" class="ring-arc" stroke-dasharray="120 40 30 40 200 60"/>
+        </g>
+        <g class="spin-fast">
+          <circle cx="200" cy="200" r="104" class="ring-thick" stroke-dasharray="60 20"/>
+        </g>
+        <circle cx="200" cy="200" r="86" class="ring-thin"/>
+        <g id="segments"></g>
+        <circle cx="200" cy="200" r="70" fill="url(#coreGlow)" class="core-glow"/>
+        <circle cx="200" cy="200" r="34" class="core-inner"/>
+      </svg>
+      <div class="reactor-label mono" id="stateLabel">STANDBY</div>
+    </div>
+    <div class="interim" id="interim"></div>
+    <div class="controls">
+      <button class="btn primary" id="talkBtn"><span class="dot"></span>TALK</button>
+      <button class="btn" id="wakeBtn" title="Always listen for 'Jarvis'">WAKE WORD</button>
+      <button class="btn" id="stopBtn">SILENCE</button>
+    </div>
+  </section>
+
+  <!-- RIGHT: comms -->
+  <section class="panel comms" id="commsPanel">
+    <div class="panel-head"><span>COMMS LOG</span><button class="mini" id="clearBtn">CLEAR</button></div>
+    <div class="panel-body log" id="log"></div>
+  </section>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="comms" class="active">COMMS</button>
+  <button data-tab="intel">INTEL</button>
+</nav>
+
+<form class="cmdbar" id="cmdForm" autocomplete="off">
+  <span class="prompt mono">&gt;</span>
+  <input id="cmdInput" placeholder="Type a command or ask anything…" enterkeyhint="send">
+  <button class="btn primary" type="submit">SEND</button>
+</form>
+
+<!-- settings -->
+<dialog id="settings">
+  <form method="dialog" class="settings-inner">
+    <div class="panel-head"><span>SYSTEM CONFIGURATION</span><button class="mini" value="close">CLOSE</button></div>
+    <div class="settings-body">
+      <label>Gemini API key
+        <input id="sKey" type="password" placeholder="Paste key from aistudio.google.com" autocomplete="off">
+        <small>Stored only in this browser on this device. Never sent anywhere except Google's Gemini API.</small>
+      </label>
+      <label>Model
+        <div class="row"><select id="sModel"></select><button type="button" class="mini" id="sTest">TEST</button></div>
+        <small id="sTestOut">gemini-flash-latest always points to Google's newest Flash model.</small>
+      </label>
+      <label><span><input type="checkbox" id="sSearch" checked> Use Google Search for live info (news, facts)</span></label>
+      <label>How should JARVIS address you
+        <input id="sTitle" placeholder="sir">
+      </label>
+      <label>Home city (weather)
+        <input id="sCity" placeholder="Bucharest">
+      </label>
+      <label>News region
+        <input id="sRegion" placeholder="Romania and the world">
+      </label>
+      <label>Speech language
+        <select id="sLang">
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="ro-RO">Romanian</option>
+        </select>
+      </label>
+      <label>Voice
+        <div class="row"><select id="sVoice"></select><button type="button" class="mini" id="sVoiceTest">PLAY</button></div>
+      </label>
+      <label>Speech rate <input id="sRate" type="range" min="0.7" max="1.4" step="0.05"></label>
+      <button type="button" class="btn" id="sForget">ERASE MEMORY</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
