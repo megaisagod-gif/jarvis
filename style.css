@@ -227,6 +227,30 @@ table.ws td.pr { text-align: right; white-space: nowrap; font-family: "Share Tec
 .ideas button:hover { border-color: var(--cyan); background: rgba(42,212,255,.15); }
 .ideas button small { display: block; color: var(--muted); font-family: "Share Tech Mono", monospace; font-size: 11px; }
 
+/* ---------- vision (live camera) ---------- */
+.vision { position: relative; width: min(100%, 680px); aspect-ratio: 4 / 3; max-height: 56vh; border: 1px solid var(--cyan-dim); background: #000; overflow: hidden;
+  clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px); }
+.vision[hidden] { display: none; }
+.vision video { width: 100%; height: 100%; object-fit: cover; display: block; filter: saturate(.85) contrast(1.05); }
+.vision video.mirror { transform: scaleX(-1); }
+.v-corners { position: absolute; inset: 12px; pointer-events: none;
+  background:
+    linear-gradient(var(--cyan), var(--cyan)) top left / 26px 2px no-repeat, linear-gradient(var(--cyan), var(--cyan)) top left / 2px 26px no-repeat,
+    linear-gradient(var(--cyan), var(--cyan)) top right / 26px 2px no-repeat, linear-gradient(var(--cyan), var(--cyan)) top right / 2px 26px no-repeat,
+    linear-gradient(var(--cyan), var(--cyan)) bottom left / 26px 2px no-repeat, linear-gradient(var(--cyan), var(--cyan)) bottom left / 2px 26px no-repeat,
+    linear-gradient(var(--cyan), var(--cyan)) bottom right / 26px 2px no-repeat, linear-gradient(var(--cyan), var(--cyan)) bottom right / 2px 26px no-repeat; }
+.v-scan { position: absolute; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--cyan), transparent); box-shadow: 0 0 12px var(--cyan); opacity: .6; animation: vscan 3.5s linear infinite; pointer-events: none; }
+@keyframes vscan { from { top: 0; } to { top: 100%; } }
+.v-label { position: absolute; top: 18px; left: 24px; font-size: 11px; letter-spacing: .25em; color: var(--cyan-hi); text-shadow: 0 0 6px #000; display: flex; align-items: center; gap: 6px; }
+.v-label i { width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink 1.2s infinite; }
+.v-flip { position: absolute; top: 14px; right: 18px; background: rgba(0,0,0,.45); }
+.v-flash { position: absolute; inset: 0; background: rgba(159,243,255,.5); opacity: 0; pointer-events: none; }
+.v-flash.go { animation: vflash .45s ease-out; }
+@keyframes vflash { from { opacity: 1; } to { opacity: 0; } }
+.core-zone.vision-on .reactor { width: min(15vh, 130px); margin-top: 10px; }
+.core-zone.vision-on .reactor-label { display: none; }
+.core-zone.vision-on .interim { margin-top: 6px; }
+
 /* rich replies: code + photos */
 .msg pre { background: rgba(0,0,0,.45); border: 1px solid var(--line); padding: 10px; overflow-x: auto; font: 12.5px/1.45 "Share Tech Mono", monospace; white-space: pre; margin: 8px 0 0; position: relative; }
 .msg pre .copy { position: absolute; top: 4px; right: 4px; }
@@ -286,6 +310,10 @@ dialog::backdrop { background: rgba(0, 6, 10, .75); backdrop-filter: blur(3px); 
   .core-zone { grid-column: 1; }
   .panel:not(.active) { display: none; }
   .cmdbar { grid-row: 5; }
+}
+@media (max-width: 900px) {
+  .vision { max-height: 38vh; width: auto; height: 38vh; max-width: 100%; }
+  .core-zone.vision-on .reactor { width: min(9vh, 80px); margin-top: 6px; }
 }
 @media (max-width: 900px) and (max-height: 640px) {
   .reactor { width: min(26vh, 50vw); }

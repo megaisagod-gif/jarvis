@@ -23,6 +23,11 @@ The microphone only works over HTTPS, so the app has to be hosted. Free option, 
    - **iPhone (Safari):** Share → *Add to Home Screen*.
 6. Open the app from the home screen and enter your API key once (each device/browser needs it separately).
 
+## Vision (live camera)
+Tap **VISION** (or say "turn on the camera"). JARVIS sees through the camera: every question you ask while it's on is sent with the current frame.
+Ask "what do you see?", "why isn't my LED lighting up?", "is this wired right?". **FLIP** switches front/back camera. Tap VISION again (or "turn off the camera") to stop.
+The camera stops automatically when the app goes to the background.
+
 ## Workshop (build things like Tony Stark)
 - "Let's build an Iron Man helmet with LED eyes" → JARVIS designs the project: parts list with RON prices and Romanian shops, tools, wiring, step-by-step build, safety notes, Mark II ideas. Shown in the WORKSHOP panel and saved on the device.
 - "Next step" / "Done" → reads the next step. "Repeat", "Previous step", "Step 4", "Parts list", "Tools", "Safety".

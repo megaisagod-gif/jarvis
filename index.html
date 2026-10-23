@@ -77,6 +77,14 @@
 
   <!-- CENTER: reactor -->
   <section class="core-zone">
+    <div class="vision" id="vision" hidden>
+      <video id="visionVideo" playsinline muted autoplay></video>
+      <div class="v-corners"></div>
+      <div class="v-scan"></div>
+      <div class="v-label mono"><i></i>VISION ONLINE</div>
+      <div class="v-flash" id="visionFlash"></div>
+      <button type="button" class="mini v-flip" id="visionFlip" aria-label="Switch camera">FLIP</button>
+    </div>
     <div class="reactor idle" id="reactor" role="button" tabindex="0" aria-label="Talk to JARVIS">
       <svg viewBox="0 0 400 400" class="reactor-svg">
         <defs>
@@ -107,6 +115,7 @@
     <div class="controls">
       <button class="btn primary" id="talkBtn"><span class="dot"></span>TALK</button>
       <button class="btn" id="wakeBtn" title="Always listen for 'Jarvis'">WAKE WORD</button>
+      <button class="btn" id="visionBtn" title="Let JARVIS see through the camera">VISION</button>
       <button class="btn" id="stopBtn">SILENCE</button>
     </div>
   </section>

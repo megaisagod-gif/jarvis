@@ -521,6 +521,7 @@ WORKSHOP: like you do for Tony Stark, you are the user's engineering partner. He
 Be concrete and practical: exact part names, component values, pin numbers, wiring, working code. Prefer cheap, easy-to-find parts. Prices in RON; good sources for the user: Optimus Digital, Cleste.ro, Sigmanortec, Ardushop, eMAG, or AliExpress.
 Safety first, briefly: flag mains voltage (230 V), lithium batteries, high current, heat, lasers and power tools. Decline weapons or anything designed to hurt people; offer a safe prop version instead.
 If the user sends a photo, look carefully: identify components, read labels, check wiring against the current project, and point out problems.
+${visionOn ? `VISION IS LIVE: every user message comes with a fresh frame from the user's camera, showing what is in front of them right now. Use it: identify what you see, read labels, check wiring, spot problems and give specific, practical advice. If the question isn't about what's on camera, just answer normally without describing the image. If the frame is too dark, blurry or far away to tell, say exactly what you need (closer, more light, different angle).` : ""}
 ${projectContext()}
 
 Device actions: you can control the user's device by adding tags on separate lines at the very END of your reply. They are executed and hidden from speech.
@@ -604,6 +605,7 @@ async function askAI(text, { sourceTitle, image } = {}) {
   setState("thinking");
   const pending = addMsg("", "jarvis"); pending.classList.add("typing");
   try {
+    if (!image && visionOn) image = captureFrame();
     const { text: reply, sources } = await gemini(text, { image });
     setPill("aiPill", "ok");
     const spoken = runActions(reply);
@@ -740,10 +742,14 @@ function workshopCommand(raw, n) {
     if (p) { activeId = p.id; saveProjects(); renderWorkshop(); showTab("workshop"); return say(`Project ${p.codename} loaded. ${p.cur >= 0 ? `We're on step ${p.cur + 1}.` : "We haven't started yet."}`); }
     if (/^project\b/.test(m[0].replace(/^\S+ /, ""))) return say("I don't have a project by that name.");
   }
+  if (/^(vision on|activate vision|turn on (the )?(camera|vision)|enable (the )?(camera|vision)|open (the )?camera|start (the )?camera)\b/.test(n)) return startVision(true);
+  if (/^(vision off|deactivate vision|turn off (the )?(camera|vision)|disable (the )?(camera|vision)|close (the )?camera|stop (the )?camera)\b/.test(n)) { stopVision(); return say("Vision offline."); }
+  if (visionOn && /^(what do you see|what can you see|describe (this|what you see)|look|scan|take a look|look at this|have a look|what is this|what's this|whats this|check (this|my) (wiring|circuit|build))\b/.test(n))
+    return askAI(`${raw}\n(Look closely at the camera frame and answer about what you see. If something looks wrong or risky, say so and how to fix it.)`, { sourceTitle: "Vision" });
   if (/^(scan|take a look|look at this|have a look|what is this|what's this|check (this|my) (wiring|circuit|build))\b/.test(n)) {
     pendingScanQuestion = raw;
     ["camBtn", "wsScan"].forEach(id => { $(id).classList.remove("pulse"); void $(id).offsetWidth; $(id).classList.add("pulse"); });
-    return say("Tap the camera button and show me.");
+    return say("Tap VISION to let me watch through the camera, or the camera icon to send me a photo.");
   }
 
   const p = active();
@@ -872,11 +878,58 @@ function shrinkImage(file, max) {
 }
 renderWorkshop();
 
+
+// ------------------------------------------------------------------ vision: live camera JARVIS can look through
+let visionOn = false, visionStream = null, facing = store.get("facing", "environment");
+async function startVision(fromVoice = false, quiet = false) {
+  if (!navigator.mediaDevices?.getUserMedia) return say("This browser can't give me camera access. It needs HTTPS and a modern browser.");
+  try {
+    stopStream();
+    visionStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
+    const v = $("visionVideo");
+    v.srcObject = visionStream;
+    v.classList.toggle("mirror", facing === "user");
+    await v.play().catch(() => {});
+    visionOn = true;
+    $("vision").hidden = false; $("visionBtn").classList.add("on");
+    document.querySelector(".core-zone").classList.add("vision-on");
+    if (!quiet) say(pick([`Vision online. Show me what you're working on, ${cfg.title}.`, "Optics online. I'm watching.", "Camera feed is live. Ask me anything about what I see."]));
+  } catch (e) {
+    const denied = e.name === "NotAllowedError" || e.name === "SecurityError";
+    say(denied ? (fromVoice ? "I need you to tap the VISION button so the browser lets me use the camera." : "Camera access was denied. Allow the camera for this site in your browser settings.")
+               : `I couldn't start the camera: ${e.message}`);
+  }
+}
+function stopStream() { visionStream?.getTracks().forEach(t => t.stop()); visionStream = null; }
+function stopVision() {
+  stopStream(); visionOn = false;
+  $("vision").hidden = true; $("visionBtn").classList.remove("on");
+  document.querySelector(".core-zone").classList.remove("vision-on");
+}
+// grab the current frame as base64 JPEG (max 1024 px) for Gemini
+function captureFrame() {
+  const v = $("visionVideo");
+  if (!v.videoWidth) return null;
+  const k = Math.min(1, 1024 / Math.max(v.videoWidth, v.videoHeight));
+  const c = document.createElement("canvas");
+  c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+  c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+  const f = $("visionFlash"); f.classList.remove("go"); void f.offsetWidth; f.classList.add("go");
+  return c.toDataURL("image/jpeg", .82).split(",")[1];
+}
+$("visionBtn").onclick = () => visionOn ? (stopVision(), say("Vision offline.")) : startVision();
+$("visionFlip").onclick = () => { facing = facing === "user" ? "environment" : "user"; store.set("facing", facing); startVision(false, true); };
+// free the camera when the app goes to the background; resume when it comes back
+document.addEventListener("visibilitychange", () => {
+  if (!visionOn) return;
+  if (document.hidden) stopStream();
+  else startVision(false, true);
+});
 // ------------------------------------------------------------------ command router
 // Simple things are handled instantly and offline; everything else goes to Gemini.
 const NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, ninety: 90, half: .5 };
-const HELP = () => `Here's what I can do, ${cfg.title}. In the workshop: say "let's build" and an idea, and I'll draw up the parts, wiring and steps, then walk you through them with "next step". Tap the camera to show me your build. I can also brief you on the news, give you the weather, open websites, set timers, and answer pretty much anything through Gemini.`;
+const HELP = () => `Here's what I can do, ${cfg.title}. Tap VISION and I'll see through the camera: ask me what I see or what's wrong with your build. In the workshop: say "let's build" and an idea, and I'll draw up the parts, wiring and steps, then walk you through them with "next step". Tap the camera to show me your build. I can also brief you on the news, give you the weather, open websites, set timers, and answer pretty much anything through Gemini.`;
 
 async function handle(raw) {
   addMsg(raw, "user");
