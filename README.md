@@ -23,10 +23,17 @@ The microphone only works over HTTPS, so the app has to be hosted. Free option, 
    - **iPhone (Safari):** Share → *Add to Home Screen*.
 6. Open the app from the home screen and enter your API key once (each device/browser needs it separately).
 
+## Workshop (build things like Tony Stark)
+- "Let's build an Iron Man helmet with LED eyes" → JARVIS designs the project: parts list with RON prices and Romanian shops, tools, wiring, step-by-step build, safety notes, Mark II ideas. Shown in the WORKSHOP panel and saved on the device.
+- "Next step" / "Done" → reads the next step. "Repeat", "Previous step", "Step 4", "Parts list", "Tools", "Safety".
+- Any question while a project is active is answered in its context ("what resistor do I need?"). Code and wiring appear on screen with a COPY button.
+- Camera button (or "look at this", then tap the camera) → send a photo of your build; JARVIS checks it against the current step.
+- "List projects", "Switch to <name>", NEW / DEL buttons in the panel.
+
 ## Commands
 Anything you say goes to Gemini, except these, which are instant:
 - "What time is it?", "What's the date?"
-- "Weather" / "Weather in London"
+- "Weather" (default city: Suceava) / "Weather in London"
 - "Set a timer for 10 minutes"
 - "Open YouTube", "Play Daft Punk", "Google best pizza near me"
 - "News" / "Give me the headlines": Gemini searches Google and briefs you; sources appear in the INTEL panel

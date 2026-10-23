@@ -14,7 +14,7 @@ const cfg = {
   get model() { return store.get("model", "gemini-flash-latest"); },
   get search() { return store.get("search", "1") === "1"; },
   get title() { return store.get("title", "") || "sir"; },
-  get city() { return store.get("city", "") || "Bucharest"; },
+  get city() { return store.get("city", "") || "Suceava"; },
   get region() { return store.get("region", "") || "Romania and the world"; },
   get lang() { return store.get("lang", "en-US"); },
   get voice() { return store.get("voice", ""); },
@@ -271,12 +271,18 @@ addEventListener("keydown", e => {
   if (e.key === "Escape") silence();
 });
 
-// mobile tabs
-document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+// tabs: on phones one panel at a time; on wide screens comms stays and the left column flips intel <-> workshop
+document.querySelectorAll("#tabs button, .ptabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+let sideTab = store.get("sideTab", "intel");
 function showTab(t) {
+  if (t !== "comms") { sideTab = t; store.set("sideTab", t); }
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("active", x.dataset.tab === t));
+  document.querySelectorAll(".ptabs button").forEach(x => x.classList.toggle("on", x.dataset.tab === sideTab));
   $("commsPanel").classList.toggle("active", t === "comms");
   $("intelPanel").classList.toggle("active", t === "intel");
+  $("workshopPanel").classList.toggle("active", t === "workshop");
+  $("intelPanel").classList.toggle("shown", sideTab === "intel");
+  $("workshopPanel").classList.toggle("shown", sideTab === "workshop");
 }
 showTab("comms");
 
@@ -375,12 +381,19 @@ Personality: calm, highly competent, loyal, with dry, understated British wit. N
 
 Your replies are SPOKEN ALOUD by text-to-speech, so:
 - Be brief: usually 1 to 3 sentences. Go longer only if explicitly asked for detail, or for a news briefing.
-- Plain text only. No markdown, no bullet symbols, no emojis, no URLs, no tables.
+- Spoken part: plain text only. No markdown, no bullet symbols, no emojis, no URLs, no tables.
+- When details must be SEEN rather than heard (code, wiring, pin maps, calculations, part lists), give the short spoken answer first, then put the details in a fenced code block (\`\`\`). Code blocks are shown on screen and never read aloud; just say they're on screen.
 - Write numbers, times and units the way they should be spoken.
 - Reply in English unless the user clearly speaks another language.
 
 Context: the current local date and time is ${now.toLocaleString("en-GB", { dateStyle: "full", timeStyle: "short" })} (${Intl.DateTimeFormat().resolvedOptions().timeZone}). The user's home city is ${cfg.city}. Preferred news region: ${cfg.region}.
 ${cfg.search ? "You have Google Search available: use it for anything current (news, scores, prices, events, facts that may have changed). Never invent current events." : "You do not have internet access; say so if asked about current events."}
+
+WORKSHOP: like you do for Tony Stark, you are the user's engineering partner. Help them design and build real things: electronics (Arduino, ESP32, Raspberry Pi, sensors, LEDs, motors), robotics, 3D printing, props and cosplay (Iron Man helmets, arc reactors, repulsor lights), home automation, mechanics and code.
+Be concrete and practical: exact part names, component values, pin numbers, wiring, working code. Prefer cheap, easy-to-find parts. Prices in RON; good sources for the user: Optimus Digital, Cleste.ro, Sigmanortec, Ardushop, eMAG, or AliExpress.
+Safety first, briefly: flag mains voltage (230 V), lithium batteries, high current, heat, lasers and power tools. Decline weapons or anything designed to hurt people; offer a safe prop version instead.
+If the user sends a photo, look carefully: identify components, read labels, check wiring against the current project, and point out problems.
+${projectContext()}
 
 Device actions: you can control the user's device by adding tags on separate lines at the very END of your reply. They are executed and hidden from speech.
 [[open: https://full-url]]  opens a website (use it when asked to open, show or play something; for YouTube searches use https://www.youtube.com/results?search_query=...)
@@ -388,12 +401,18 @@ Device actions: you can control the user's device by adding tags on separate lin
 Only use actions when the user asks for them.`;
 }
 
-async function gemini(userText, { useSearch = cfg.search } = {}) {
-  const contents = [...history.slice(-20), { role: "user", parts: [{ text: userText }] }];
+async function gemini(userText, opts = {}) {
+  const { image = null, json = false, remember = !json } = opts;
+  const useSearch = opts.useSearch ?? (cfg.search && !json);
+  const parts = [{ text: userText }];
+  if (image) parts.unshift({ inlineData: { mimeType: "image/jpeg", data: image } });
+  const contents = remember ? [...history.slice(-20), { role: "user", parts }] : [{ role: "user", parts }];
   const body = {
     systemInstruction: { parts: [{ text: systemPrompt() }] },
     contents,
-    generationConfig: { temperature: .7, maxOutputTokens: 1024 },
+    // generous limit: newer models spend part of it on internal "thinking"
+    generationConfig: json ? { temperature: .4, maxOutputTokens: 16384, responseMimeType: "application/json" }
+                           : { temperature: .7, maxOutputTokens: 4096 },
   };
   if (useSearch) body.tools = [{ google_search: {} }];
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`, {
@@ -406,14 +425,17 @@ async function gemini(userText, { useSearch = cfg.search } = {}) {
     const msg = data.error?.message || res.statusText;
     // search grounding may be unavailable for some models / quotas: retry once without it
     if (useSearch && (res.status === 400 || res.status === 429) && /search|tool|grounding|quota|exhausted/i.test(msg))
-      return gemini(userText, { useSearch: false });
+      return gemini(userText, { ...opts, useSearch: false });
     const err = new Error(msg); err.status = res.status; throw err;
   }
   const cand = data.candidates?.[0];
   const text = (cand?.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join("").trim();
   if (!text) throw new Error(cand?.finishReason === "SAFETY" ? "That request was blocked by Gemini's safety filter." : "Gemini returned an empty response.");
-  history.push({ role: "user", parts: [{ text: userText }] }, { role: "model", parts: [{ text }] });
-  saveHistory();
+  if (remember) {
+    // photos are not kept in memory (too big for storage); just note that one was sent
+    history.push({ role: "user", parts: [{ text: (image ? "[sent a photo] " : "") + userText }] }, { role: "model", parts: [{ text }] });
+    saveHistory();
+  }
   const chunks = cand.groundingMetadata?.groundingChunks || [];
   return { text, sources: chunks.map(c => c.web).filter(Boolean) };
 }
@@ -445,7 +467,7 @@ function runActions(text) {
   return text.replace(/\[\[[^\]]*\]\]/g, "").trim();
 }
 
-async function askAI(text, { sourceTitle } = {}) {
+async function askAI(text, { sourceTitle, image } = {}) {
   if (!cfg.key) {
     say(`I'm afraid my higher functions are offline, ${cfg.title}. Please add your Gemini API key in settings.`);
     return openSettings();
@@ -454,15 +476,20 @@ async function askAI(text, { sourceTitle } = {}) {
   setState("thinking");
   const pending = addMsg("", "jarvis"); pending.classList.add("typing");
   try {
-    const { text: reply, sources } = await gemini(text);
+    const { text: reply, sources } = await gemini(text, { image });
     setPill("aiPill", "ok");
     const spoken = runActions(reply);
     pending.classList.remove("typing");
-    pending.querySelector(".body").textContent = spoken;
+    renderRich(pending.querySelector(".body"), spoken);
     showSources(sources, sourceTitle || text.slice(0, 40));
     speak(spoken);
   } catch (e) {
     pending.remove();
+    say(geminiError(e));
+  }
+}
+
+function geminiError(e) {
     let msg = `I ran into a problem reaching Gemini: ${e.message}`;
     if (e.status === 400 && /api key/i.test(e.message)) msg = "Gemini rejected the API key. Please check it in settings.";
     else if (e.status === 403) msg = "Gemini refused the request. The API key may be restricted or disabled.";
@@ -470,20 +497,265 @@ async function askAI(text, { sourceTitle } = {}) {
     else if (e.status === 429) msg = "We've hit Gemini's rate limit. Give it a minute and try again.";
     else if (e.status >= 500) msg = "Gemini's servers are having trouble right now. Try again shortly.";
     setPill("aiPill", "err");
-    say(msg);
+    return msg;
+}
+
+// text with ``` fences -> paragraphs + copyable code blocks
+function renderRich(el, text) {
+  el.innerHTML = "";
+  text.split(/```/).forEach((chunk, i) => {
+    if (i % 2) {
+      const code = chunk.replace(/^[\w+#.-]*\n/, "");
+      const pre = document.createElement("pre"), c = document.createElement("code"), b = document.createElement("button");
+      c.textContent = code.replace(/\n$/, "");
+      b.className = "mini copy"; b.type = "button"; b.textContent = "COPY";
+      b.onclick = () => navigator.clipboard?.writeText(c.textContent).then(() => { b.textContent = "COPIED"; });
+      pre.append(c, b); el.appendChild(pre);
+    } else if (chunk.trim()) {
+      el.appendChild(document.createTextNode(chunk.replace(/\*\*(.+?)\*\*/g, "$1").replace(/^\s*\n|\n\s*$/g, "")));
+    }
+  });
+}
+
+// ------------------------------------------------------------------ workshop (Stark-style build projects)
+let projects = [];
+try { projects = JSON.parse(store.get("projects", "[]")); } catch { projects = []; }
+let activeId = store.get("activeProject", "");
+let awaitingIdea = false, pendingScanQuestion = "";
+const saveProjects = () => { store.set("projects", JSON.stringify(projects)); store.set("activeProject", activeId || ""); };
+const active = () => projects.find(p => p.id === activeId) || null;
+
+const IDEAS = [
+  ["Arc reactor desk lamp", "LEDs · 3D print · beginner"],
+  ["Iron Man helmet with glowing eyes", "Cosplay · LEDs · intermediate"],
+  ["Voice-controlled RGB LED strip with an ESP32", "Wi-Fi · code · beginner"],
+  ["Repulsor glove light with a palm button", "Props · Arduino · beginner"],
+  ["Room weather station on a small display", "Sensors · ESP32 · beginner"],
+  ["Desktop robot arm with 4 servos", "Robotics · intermediate"],
+];
+
+function projectContext() {
+  const p = active();
+  if (!p) return "No workshop project is active right now.";
+  const step = p.steps[p.cur];
+  return `ACTIVE PROJECT: "${p.name}" (codename ${p.codename}). ${p.summary}
+Parts: ${p.parts.map(x => `${x.qty}x ${x.name}${x.spec ? " (" + x.spec + ")" : ""}`).join("; ")}.
+Progress: ${p.steps.filter(s => s.done).length} of ${p.steps.length} steps done. ${step ? `Current step ${p.cur + 1}: ${step.title}. ${step.detail}` : "Not started yet."}
+Answer questions in the context of this project unless the user clearly changes the subject.`;
+}
+
+async function createProject(idea) {
+  if (!cfg.key) { say(`I'll need my Gemini link for that, ${cfg.title}. Add your API key in settings.`); return openSettings(); }
+  showTab("workshop");
+  setState("thinking", "DESIGNING");
+  $("workshop").innerHTML = `<div class="ws-code">DESIGNING…</div><div class="ws-name"></div><div class="dim">Running the numbers. This takes a few seconds.</div>`;
+  $("workshop").querySelector(".ws-name").textContent = idea;
+  speak(pick(["Right away. Drawing up the schematics.", "Excellent idea. Let me run the numbers.", "On it. Pulling up the blueprints."]));
+  const prompt = `Design a realistic project plan that a hobbyist can build at home for: "${idea}".
+The builder lives in ${cfg.city}, Romania. Prices in RON, from Romanian shops (Optimus Digital, Cleste.ro, Sigmanortec, Ardushop, eMAG) or AliExpress. Prefer cheap, common parts.
+If the idea is a weapon or meant to hurt people, design a harmless prop or display version instead and say so in the summary.
+Return ONLY JSON with exactly these keys:
+{"codename": "2-3 word Stark-style codename, uppercase", "name": "short project name", "summary": "2 sentences, spoken style",
+ "difficulty": "beginner|intermediate|advanced", "time": "e.g. 2 evenings", "cost": "e.g. 150-200 RON",
+ "parts": [{"name": "", "qty": 1, "spec": "value/model", "price": "e.g. 25 RON", "where": "shop"}],
+ "tools": ["..."],
+ "wiring": [{"from": "component pin", "to": "component pin", "note": ""}],
+ "steps": [{"title": "short imperative title", "detail": "2-4 concrete sentences with values, pins and checks"}],
+ "safety": ["short warnings"],
+ "upgrades": ["ideas for a Mark II version"]}
+6 to 14 steps. Wiring may be empty if nothing is wired. Use plain text inside strings.`;
+  try {
+    const { text } = await gemini(prompt, { json: true });
+    const d = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+    const p = {
+      id: Date.now().toString(36), created: Date.now(), idea,
+      codename: String(d.codename || "MARK I").toUpperCase(), name: d.name || idea, summary: d.summary || "",
+      difficulty: d.difficulty || "", time: d.time || "", cost: d.cost || "",
+      parts: Array.isArray(d.parts) ? d.parts : [], tools: Array.isArray(d.tools) ? d.tools : [],
+      wiring: Array.isArray(d.wiring) ? d.wiring : [], safety: Array.isArray(d.safety) ? d.safety : [],
+      upgrades: Array.isArray(d.upgrades) ? d.upgrades : [],
+      steps: (Array.isArray(d.steps) ? d.steps : []).map(s => ({ title: s.title || "", detail: s.detail || "", done: false })),
+      cur: -1,
+    };
+    if (!p.steps.length) throw new Error("the plan came back without any steps");
+    projects.unshift(p); activeId = p.id; saveProjects(); renderWorkshop();
+    setPill("aiPill", "ok");
+    say(`Project ${p.codename} is on the board. ${p.summary} Estimated cost ${p.cost || "unknown"}, ${p.parts.length} parts, ${p.steps.length} steps. Say "next step" when you're ready to start.`);
+  } catch (e) {
+    renderWorkshop();
+    say(e instanceof SyntaxError ? "The blueprint came back garbled. Shall we try again?" : (e.status ? geminiError(e) : `I couldn't finish the design: ${e.message}.`));
   }
 }
+
+function stepSpeech(p) {
+  showTab("workshop");
+  const s = p.steps[p.cur];
+  return `Step ${p.cur + 1} of ${p.steps.length}. ${s.title}. ${s.detail}`;
+}
+
+// voice / text commands for the workshop; returns a promise when handled, otherwise null
+function workshopCommand(raw, n) {
+  let m;
+  if ((m = raw.match(/^\s*(?:new project|start (?:a )?(?:new )?project|let'?s build|help me (?:build|make)|i (?:want|wanna) to? ?(?:build|make)|build me|design me|let'?s make)\b[\s:,-]*(?:an?\s+|the\s+)?(.*)$/i))) {
+    const idea = m[1].replace(/[.?!]+$/, "").trim();
+    if (idea.length > 2) return createProject(idea);
+    awaitingIdea = true; showTab("workshop");
+    return say(`What are we building, ${cfg.title}?`);
+  }
+  if (/^(list|show)( my)? projects|^my projects|^what projects/.test(n)) {
+    if (!projects.length) return say("The workshop is empty. Say let's build, followed by an idea.");
+    return say(`You have ${projects.length} project${projects.length > 1 ? "s" : ""}: ${projects.map(p => p.name).join(", ")}.`);
+  }
+  if ((m = n.match(/^(?:switch to|open|load|resume|continue) (?:the )?(?:project )?(.+?)(?: project)?$/))) {
+    const q = m[1];
+    const p = projects.find(p => norm(p.name).includes(q) || norm(p.codename).includes(q));
+    if (p) { activeId = p.id; saveProjects(); renderWorkshop(); showTab("workshop"); return say(`Project ${p.codename} loaded. ${p.cur >= 0 ? `We're on step ${p.cur + 1}.` : "We haven't started yet."}`); }
+    if (/^project\b/.test(m[0].replace(/^\S+ /, ""))) return say("I don't have a project by that name.");
+  }
+  if (/^(scan|take a look|look at this|have a look|what is this|what's this|check (this|my) (wiring|circuit|build))\b/.test(n)) {
+    pendingScanQuestion = raw;
+    ["camBtn", "wsScan"].forEach(id => { $(id).classList.remove("pulse"); void $(id).offsetWidth; $(id).classList.add("pulse"); });
+    return say("Tap the camera button and show me.");
+  }
+
+  const p = active();
+  if (!p) return null;
+  if (/^(next|next step|what's next|whats next|done|step done|finished|i'm done|im done|ok next|continue)\b/.test(n)) {
+    if (p.cur >= 0 && p.steps[p.cur]) p.steps[p.cur].done = true;
+    const nextIdx = p.steps.findIndex((s, i) => i > p.cur && !s.done);
+    if (nextIdx === -1) {
+      p.cur = p.steps.length; saveProjects(); renderWorkshop();
+      return say(`That's the last step. Project ${p.codename} is complete. Outstanding work, ${cfg.title}.${p.upgrades[0] ? ` For the Mark Two, consider this: ${p.upgrades[0]}` : ""}`);
+    }
+    p.cur = nextIdx; saveProjects(); renderWorkshop();
+    return say(stepSpeech(p));
+  }
+  if (/^(repeat|say again|current step|what step|which step|where (are|were) we)\b/.test(n)) {
+    if (p.cur < 0) return say(`We haven't started. Say "next step" to begin.`);
+    if (!p.steps[p.cur]) return say("Every step is done.");
+    return say(stepSpeech(p));
+  }
+  if (/^(previous|previous step|go back|back|last step)\b/.test(n)) {
+    if (p.cur <= 0) return say("We're at the very beginning.");
+    p.cur = Math.min(p.cur, p.steps.length) - 1; p.steps[p.cur].done = false; saveProjects(); renderWorkshop();
+    return say(stepSpeech(p));
+  }
+  if ((m = n.match(/^(?:go to |jump to )?step (\d+)$/))) {
+    const k = +m[1] - 1;
+    if (!p.steps[k]) return say(`There are only ${p.steps.length} steps.`);
+    p.cur = k; saveProjects(); renderWorkshop();
+    return say(stepSpeech(p));
+  }
+  if (/^(parts|parts list|shopping list|what do i need|what parts|bill of materials)\b/.test(n)) {
+    const list = p.parts.slice(0, 10).map(x => `${x.qty > 1 ? x.qty + " " : ""}${x.name}`).join(", ");
+    return say(`You'll need ${list}${p.parts.length > 10 ? ", and a few more items on screen" : ""}. Roughly ${p.cost || "an unknown amount"} in total.`);
+  }
+  if (/^(tools|what tools)\b/.test(n)) return say(p.tools.length ? `Tools: ${p.tools.join(", ")}.` : "No special tools needed.");
+  if (/^(safety|safety check|is it safe|any risks)\b/.test(n)) return say(p.safety.length ? p.safety.join(". ") : "Nothing hazardous here, but use common sense.");
+  return null;
+}
+
+function renderWorkshop() {
+  const sel = $("wsSelect");
+  sel.innerHTML = "";
+  if (!projects.length) sel.add(new Option("No projects yet", ""));
+  projects.forEach(p => sel.add(new Option(`${p.codename} · ${p.name}`, p.id)));
+  sel.value = activeId;
+
+  const p = active(), box = $("workshop");
+  if (!p) {
+    $("wsMeta").textContent = "NO PROJECT";
+    box.innerHTML = `<div class="ws-code">WORKSHOP ONLINE</div>
+      <div class="ws-name">What are we building today?</div>
+      <div class="dim">Say <b>“let's build…”</b> and an idea, or tap one below. I'll design the parts list, wiring and step-by-step plan, then talk you through it. Tap the camera to show me your build.</div>
+      <div class="ideas"></div>`;
+    IDEAS.forEach(([t, s]) => {
+      const b = document.createElement("button"); b.type = "button";
+      b.innerHTML = `<small></small>`; b.prepend(t); b.querySelector("small").textContent = s;
+      b.onclick = () => handle(`Let's build ${t.toLowerCase()}`);
+      box.querySelector(".ideas").appendChild(b);
+    });
+    return;
+  }
+  const done = p.steps.filter(s => s.done).length;
+  $("wsMeta").textContent = `${done}/${p.steps.length} STEPS`;
+  const e = escapeHtml, str = v => e(String(v ?? ""));
+  box.innerHTML = `
+    <div class="ws-code">PROJECT ${str(p.codename)}</div>
+    <div class="ws-name">${str(p.name)}</div>
+    <div class="chips">${[p.difficulty, p.time, p.cost].filter(Boolean).map(c => `<span class="chip">${str(c).toUpperCase()}</span>`).join("")}</div>
+    <div>${str(p.summary)}</div>
+    <div class="progress"><i style="width:${Math.round(done / p.steps.length * 100)}%"></i></div>
+    <div class="ws-h">BUILD SEQUENCE</div>
+    <div id="wsSteps">${p.steps.map((s, i) => `<div class="step${i === p.cur ? " cur" : ""}${s.done ? " done" : ""}" data-i="${i}">
+      <input type="checkbox" ${s.done ? "checked" : ""} aria-label="Done"><div><b>${i + 1}. ${str(s.title)}</b><span>${str(s.detail)}</span></div></div>`).join("")}</div>
+    <div class="ws-h">BILL OF MATERIALS</div>
+    <table class="ws">${p.parts.map(x => `<tr><td class="q">${str(x.qty || 1)}×</td><td>${str(x.name)}<small>${str([x.spec, x.where].filter(Boolean).join(" · "))}</small></td><td class="pr">${str(x.price)}</td></tr>`).join("")}</table>
+    ${p.tools.length ? `<div class="ws-h">TOOLS</div><ul class="ws-list">${p.tools.map(t => `<li>${str(t)}</li>`).join("")}</ul>` : ""}
+    ${p.wiring.length ? `<div class="ws-h">WIRING</div><table class="ws">${p.wiring.map(w => `<tr><td>${str(w.from)}</td><td class="q">→</td><td>${str(w.to)}${w.note ? `<small>${str(w.note)}</small>` : ""}</td></tr>`).join("")}</table>` : ""}
+    ${p.safety.length ? `<div class="ws-h">SAFETY</div><ul class="ws-list warn">${p.safety.map(t => `<li>${str(t)}</li>`).join("")}</ul>` : ""}
+    ${p.upgrades.length ? `<div class="ws-h">MARK II IDEAS</div><ul class="ws-list">${p.upgrades.map(t => `<li>${str(t)}</li>`).join("")}</ul>` : ""}`;
+  box.querySelectorAll(".step").forEach(el => {
+    const i = +el.dataset.i;
+    el.querySelector("input").onclick = ev => { ev.stopPropagation(); p.steps[i].done = ev.target.checked; saveProjects(); renderWorkshop(); };
+    el.onclick = () => { if (i === p.cur) el.classList.toggle("open"); else { p.cur = i; saveProjects(); renderWorkshop(); } };
+  });
+  box.querySelector(".step.cur")?.scrollIntoView({ block: "nearest" });
+}
+
+$("wsSelect").onchange = e => { activeId = e.target.value; saveProjects(); renderWorkshop(); };
+$("wsNew").onclick = () => { activeId = ""; saveProjects(); renderWorkshop(); awaitingIdea = true; say(`What are we building, ${cfg.title}?`); };
+$("wsDelete").onclick = () => {
+  const p = active(); if (!p) return;
+  if (!confirm(`Delete project ${p.codename} (${p.name})?`)) return;
+  projects = projects.filter(x => x !== p); activeId = projects[0]?.id || ""; saveProjects(); renderWorkshop();
+};
+
+// camera / photo: resize on device, then send to Gemini with the question
+$("camBtn").onclick = $("wsScan").onclick = () => $("scanInput").click();
+$("scanInput").onchange = async e => {
+  const file = e.target.files[0]; e.target.value = "";
+  if (!file) return;
+  try {
+    const dataUrl = await shrinkImage(file, 1280);
+    const typed = $("cmdInput").value.trim(); $("cmdInput").value = "";
+    const q = typed || pendingScanQuestion ||
+      (active() ? "Here's my build so far. What do you see? Check it against the current step and point out any problems." : "What is this? Identify it and tell me anything useful.");
+    pendingScanQuestion = "";
+    const m = addMsg(q, "user");
+    const img = document.createElement("img"); img.className = "shot"; img.src = dataUrl; img.alt = "Photo sent to JARVIS";
+    m.appendChild(img);
+    askAI(q, { image: dataUrl.split(",")[1], sourceTitle: "Photo analysis" });
+  } catch { say("I couldn't read that image."); }
+};
+function shrinkImage(file, max) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", .85));
+    };
+    img.onerror = reject; img.src = url;
+  });
+}
+renderWorkshop();
 
 // ------------------------------------------------------------------ command router
 // Simple things are handled instantly and offline; everything else goes to Gemini.
 const NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, ninety: 90, half: .5 };
-const HELP = () => `Here's what I can do, ${cfg.title}. Brief you on the news, tell you the time, date and weather, open websites, search Google or YouTube, set timers, and answer pretty much anything else through Gemini. Say Jarvis first when wake word mode is on.`;
+const HELP = () => `Here's what I can do, ${cfg.title}. In the workshop: say "let's build" and an idea, and I'll draw up the parts, wiring and steps, then walk you through them with "next step". Tap the camera to show me your build. I can also brief you on the news, give you the weather, open websites, set timers, and answer pretty much anything through Gemini.`;
 
 async function handle(raw) {
   addMsg(raw, "user");
   const n = norm(raw);
   let m;
+
+  if (awaitingIdea) { awaitingIdea = false; if (!/^(never mind|nevermind|cancel|nothing)\b/.test(n)) return createProject(raw); return say("Very well."); }
 
   if (/^(stop|silence|quiet|shut up|enough|cancel|that's all)\b/.test(n)) return silence();
 
@@ -536,6 +808,9 @@ async function handle(raw) {
     showTab("intel");
     return askAI(`Give me a spoken news briefing: the 5 most important news stories right now for ${cfg.region}. Use Google Search for today's news. One or two sentences per story, introduced naturally like a butler briefing his employer. End by asking if I want details on any of them.`, { sourceTitle: "News briefing" });
   }
+
+  const ws = workshopCommand(raw, n);
+  if (ws) return ws;
 
   if (/^(help|what can you do|commands|what do you do)\b/.test(n)) return say(HELP());
   if (/^(forget everything|clear memory|reset memory|erase memory)\b/.test(n)) { history = []; saveHistory(); return say("Memory wiped. A fresh start."); }

@@ -175,6 +175,65 @@ body {
 
 .tabs { display: none; }
 
+/* desktop: intel + workshop share the left column */
+.side { grid-column: 1; grid-row: 1; }
+.core-zone { grid-column: 2; grid-row: 1; }
+.comms { grid-column: 3; grid-row: 1; }
+@media (min-width: 901px) { .side:not(.shown) { display: none; } }
+.ptabs { display: inline-flex; gap: 4px; }
+.ptabs button {
+  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer;
+  font: 11px Orbitron, sans-serif; letter-spacing: .25em; padding: 2px 4px;
+}
+.ptabs button.on { color: var(--cyan); border-bottom-color: var(--cyan); }
+@media (max-width: 900px) { .ptabs button:not(.on) { display: none; } }
+
+/* ---------- workshop ---------- */
+.blueprint {
+  background-image:
+    linear-gradient(rgba(42,212,255,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42,212,255,.07) 1px, transparent 1px),
+    linear-gradient(rgba(42,212,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42,212,255,.03) 1px, transparent 1px);
+  background-size: 60px 60px, 60px 60px, 12px 12px, 12px 12px;
+}
+.ws-bar { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line-soft); }
+.ws-bar select { flex: 1; min-width: 0; background: rgba(42,212,255,.06); color: var(--text); border: 1px solid var(--line); font: 12px "Share Tech Mono", monospace; padding: 4px 6px; }
+.ws-bar select option { background: #041420; }
+.mini.danger { color: var(--red); border-color: rgba(255,90,90,.4); }
+.ws-code { font: 12px "Share Tech Mono", monospace; color: var(--amber); letter-spacing: .3em; }
+.ws-name { font: 600 22px Rajdhani, sans-serif; line-height: 1.15; margin: 2px 0 6px; color: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chip { font: 11px "Share Tech Mono", monospace; border: 1px solid var(--line); padding: 2px 8px; color: var(--cyan-hi); }
+.ws-h { font: 11px "Share Tech Mono", monospace; color: var(--muted); letter-spacing: .25em; margin: 18px 0 6px; border-bottom: 1px solid var(--line-soft); padding-bottom: 3px; }
+.progress { height: 4px; background: rgba(42,212,255,.12); margin-top: 6px; }
+.progress i { display: block; height: 100%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); transition: width .4s; }
+.step { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 7px 6px; border-left: 2px solid transparent; cursor: pointer; }
+.step input { accent-color: var(--cyan); margin-top: 4px; }
+.step b { font-weight: 600; display: block; }
+.step span { color: var(--muted); font-size: 14px; display: none; white-space: pre-wrap; }
+.step.cur { border-left-color: var(--cyan); background: rgba(42,212,255,.08); }
+.step.cur span, .step.open span { display: block; color: var(--text); }
+.step.done b { text-decoration: line-through; color: var(--muted); }
+table.ws { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.ws td { padding: 4px 6px 4px 0; border-bottom: 1px dashed var(--line-soft); vertical-align: top; }
+table.ws td.q { font-family: "Share Tech Mono", monospace; color: var(--cyan-hi); white-space: nowrap; }
+table.ws small { display: block; color: var(--muted); font-size: 12px; }
+table.ws td.pr { text-align: right; white-space: nowrap; font-family: "Share Tech Mono", monospace; font-size: 12px; color: var(--muted); }
+.ws-list { margin: 0; padding-left: 18px; }
+.ws-list.warn li { color: var(--amber); }
+.ideas { display: grid; gap: 8px; margin-top: 12px; }
+.ideas button { text-align: left; background: rgba(42,212,255,.06); border: 1px solid var(--line); color: var(--text); padding: 9px 12px; font: 15px Rajdhani, sans-serif; cursor: pointer; }
+.ideas button:hover { border-color: var(--cyan); background: rgba(42,212,255,.15); }
+.ideas button small { display: block; color: var(--muted); font-family: "Share Tech Mono", monospace; font-size: 11px; }
+
+/* rich replies: code + photos */
+.msg pre { background: rgba(0,0,0,.45); border: 1px solid var(--line); padding: 10px; overflow-x: auto; font: 12.5px/1.45 "Share Tech Mono", monospace; white-space: pre; margin: 8px 0 0; position: relative; }
+.msg pre .copy { position: absolute; top: 4px; right: 4px; }
+.msg img.shot { max-width: 220px; max-height: 220px; display: block; margin-top: 6px; border: 1px solid var(--line); }
+.cam { background: none; border: 0; color: var(--cyan); cursor: pointer; padding: 2px; display: grid; }
+.cam.pulse, #wsScan.pulse { animation: blink .6s 5; color: #fff; }
+
 /* ---------- settings ---------- */
 dialog {
   padding: 0; border: 1px solid var(--cyan); background: #041420f2; color: var(--text);
@@ -222,7 +281,8 @@ dialog::backdrop { background: rgba(0, 6, 10, .75); backdrop-filter: blur(3px); 
     font: 11px Orbitron, sans-serif; letter-spacing: .3em; padding: 7px;
   }
   .tabs button.active { color: var(--cyan); border-color: var(--cyan); background: rgba(42,212,255,.1); }
-  .panel { grid-row: 4; }
+  .panel { grid-row: 4; grid-column: 1; }
+  .core-zone { grid-column: 1; }
   .panel:not(.active) { display: none; }
   .cmdbar { grid-row: 5; }
 }

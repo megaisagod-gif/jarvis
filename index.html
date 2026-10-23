@@ -44,8 +44,8 @@
 
 <main class="deck">
   <!-- LEFT: intel -->
-  <section class="panel intel" id="intelPanel">
-    <div class="panel-head"><span>INTEL FEED</span><span class="mono dim" id="intelMeta">STANDBY</span></div>
+  <section class="panel intel side" id="intelPanel">
+    <div class="panel-head"><span class="ptabs"><button data-tab="intel" class="on">INTEL</button><button data-tab="workshop">WORKSHOP</button></span><span class="mono dim" id="intelMeta">STANDBY</span></div>
     <div class="panel-body" id="intel">
       <div class="widget" id="wxWidget">
         <div class="w-title mono">ATMOSPHERIC</div>
@@ -60,6 +60,18 @@
         <div class="w-title mono">SOURCES</div>
         <div id="sources" class="sources"><div class="dim">Ask for the news or anything current and the sources will appear here.</div></div>
       </div>
+    </div>
+  </section>
+
+  <!-- LEFT (alt): workshop -->
+  <section class="panel workshop side" id="workshopPanel">
+    <div class="panel-head"><span class="ptabs"><button data-tab="intel">INTEL</button><button data-tab="workshop" class="on">WORKSHOP</button></span><span class="mono dim" id="wsMeta">NO PROJECT</span></div>
+    <div class="panel-body blueprint" id="workshop"></div>
+    <div class="ws-bar">
+      <select id="wsSelect" aria-label="Project"></select>
+      <button class="mini" id="wsNew" type="button">NEW</button>
+      <button class="mini" id="wsScan" type="button">SCAN</button>
+      <button class="mini danger" id="wsDelete" type="button" title="Delete project">DEL</button>
     </div>
   </section>
 
@@ -109,9 +121,14 @@
 <nav class="tabs" id="tabs">
   <button data-tab="comms" class="active">COMMS</button>
   <button data-tab="intel">INTEL</button>
+  <button data-tab="workshop">WORKSHOP</button>
 </nav>
 
 <form class="cmdbar" id="cmdForm" autocomplete="off">
+  <button type="button" class="cam" id="camBtn" aria-label="Show JARVIS a photo" title="Show JARVIS a photo">
+    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+  </button>
+  <input type="file" id="scanInput" accept="image/*" capture="environment" hidden>
   <span class="prompt mono">&gt;</span>
   <input id="cmdInput" placeholder="Type a command or ask anything…" enterkeyhint="send">
   <button class="btn primary" type="submit">SEND</button>
@@ -135,7 +152,7 @@
         <input id="sTitle" placeholder="sir">
       </label>
       <label>Home city (weather)
-        <input id="sCity" placeholder="Bucharest">
+        <input id="sCity" placeholder="Suceava">
       </label>
       <label>News region
         <input id="sRegion" placeholder="Romania and the world">
